@@ -84,6 +84,13 @@ input[type=range] { padding: 0; accent-color: var(--accent); }
 .checks label { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
 .checks input { width: 20px; height: 20px; accent-color: var(--accent); }
 .toast { position: fixed; left: 50%; bottom: calc(92px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600; z-index: 20; font-size: 14px; }
+.sync-line { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin: -2px 2px 10px; }
+.dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: #16a34a; }
+.dot.bad { background: var(--danger); }
+.dot.busy { background: var(--accent); }
+.connected { margin-bottom: 12px; border-color: #16a34a; }
+.connected b { color: #16a34a; }
 .steps { padding-left: 20px; margin: 0 0 12px; font-size: 14px; }
 .steps li { margin-bottom: 6px; }
 </style>
@@ -95,27 +102,43 @@ input[type=range] { padding: 0; accent-color: var(--accent); }
   <section id="v-open" hidden>
     <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3m-3 3 2.5 2.5M14.5 8.5 17 11"/></svg></div><h1>PassEnter</h1></div>
     <div class="card stack">
-      <p>Open your vault file to get your passwords on this phone.</p>
+      <h2>Connect to your laptop</h2>
       <ol class="steps">
-        <li>Tap the button below.</li>
-        <li>Pick <b>passenter-vault.json</b> from Google Drive / Files.</li>
-        <li>Unlock with your master password.</li>
+        <li>On your laptop, click the PassEnter icon → <b>Settings</b> → <b>Set up phone</b>.</li>
+        <li>Point this phone's <b>Camera</b> at the QR code and tap the link.</li>
       </ol>
-      <input type="file" id="file" accept=".json,application/json" hidden>
-      <button class="primary" id="pick">Open vault file</button>
+      <label>Or paste the setup link<input id="setup-code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…#s=…"></label>
+      <button class="primary" id="setup-go">Connect</button>
       <p class="error" id="open-err"></p>
-      <p class="small muted">The file stays encrypted. Nothing is uploaded anywhere — it's decrypted only on this phone, only after you type your master password.</p>
+      <p class="small muted">Your logins stay encrypted the whole way. They're only unlocked on this phone, after you type your master password.</p>
+      <input type="file" id="file" hidden>
+      <button class="link" id="pick">Use a vault file instead</button>
+    </div>
+  </section>
+
+  <!-- Downloading the vault right after connecting -->
+  <section id="v-loading" hidden>
+    <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3m-3 3 2.5 2.5M14.5 8.5 17 11"/></svg></div><h1>PassEnter</h1></div>
+    <div class="card stack">
+      <p id="loading-msg">Getting your vault…</p>
+      <p class="error" id="loading-err"></p>
+      <button class="secondary" id="loading-retry" hidden>Try again</button>
     </div>
   </section>
 
   <!-- Locked -->
   <section id="v-lock" hidden>
     <div class="brand"><div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3m-3 3 2.5 2.5M14.5 8.5 17 11"/></svg></div><h1>PassEnter</h1></div>
+    <div class="card stack connected" id="home-hint" hidden>
+      <b>✓ Connected</b>
+      <p class="small">Now make it an app: tap <b>Share</b> → <b>Add to Home Screen</b>. The home-screen app keeps its own storage, so it'll ask for the setup link once. Copy it first:</p>
+      <button class="secondary" id="copy-setup">Copy setup link</button>
+    </div>
     <form class="card stack" id="unlock-form">
       <label>Master password<input type="password" id="pw" autocomplete="current-password" required></label>
       <p class="error" id="lock-err"></p>
       <button class="primary" type="submit" id="unlock-btn">Unlock</button>
-      <button class="link" type="button" id="replace">Load a newer vault file</button>
+      <button class="link" type="button" id="replace" hidden>Load a newer vault file</button>
     </form>
   </section>
 
@@ -127,6 +150,7 @@ input[type=range] { padding: 0; accent-color: var(--accent); }
       <button class="icon-btn" id="menu-open" aria-label="Menu" title="Menu"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
       <button class="icon-btn" id="lock" aria-label="Lock" title="Lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button>
     </div>
+    <p class="sync-line" id="sync-line" hidden><span class="dot" id="sync-dot"></span><span id="sync-text"></span></p>
     <div class="notice" id="unsynced" hidden><span>You changed logins on this phone. Save the file and merge it on your laptop so they're there too.</span><button id="export-top">Save file</button></div>
     <div class="list" id="list"></div>
     <button class="fab" id="add" aria-label="Add a login">+</button>
@@ -187,13 +211,61 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
 };
 
+// ===== GitHub sync — same logic as extension/lib/sync.js =====
+const VAULT_PATH = "passenter-vault.json";
+const ghHeaders = (cfg, json) => ({
+  Authorization: "Bearer " + cfg.t, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+  ...(json ? { "Content-Type": "application/json" } : {}),
+});
+const ghUrl = (cfg) => `https://api.github.com/repos/${cfg.o}/${cfg.r}/contents/${VAULT_PATH}`;
+async function ghExplain(res) {
+  if (res.status === 401) return "GitHub rejected the sync token. Set up the phone again from the laptop.";
+  if (res.status === 403 || res.status === 404) return "Can't reach the vault repo with this token.";
+  return "GitHub error " + res.status;
+}
+async function fetchRemote(cfg) {
+  const res = await fetch(ghUrl(cfg), { headers: ghHeaders(cfg), cache: "no-store" });
+  if (res.status === 404) return { file: null, sha: null };
+  if (!res.ok) throw new Error(await ghExplain(res));
+  const body = await res.json();
+  return { file: JSON.parse(atob(body.content.replace(/\s/g, ""))), sha: body.sha };
+}
+async function putRemote(cfg, f, sha) {
+  const res = await fetch(ghUrl(cfg), {
+    method: "PUT", headers: ghHeaders(cfg, true),
+    body: JSON.stringify({ message: "Update vault (phone)", content: btoa(JSON.stringify(f)), ...(sha ? { sha } : {}) }),
+  });
+  if (res.status === 409 || res.status === 422) { const e = new Error("conflict"); e.conflict = true; throw e; }
+  if (!res.ok) throw new Error(await ghExplain(res));
+}
+const signature = (entries) => entries.map((e) => e.id + ":" + (e.updatedAt || 0)).sort().join("|");
+function mergeEntries(a, b) {
+  const byId = new Map();
+  for (const x of [...a, ...b]) {
+    const cur = byId.get(x.id);
+    if (!cur || (x.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(x.id, x);
+  }
+  return [...byId.values()];
+}
+// Accepts the whole setup link or just the code after "#s=".
+function parseSetup(text) {
+  const code = String(text || "").trim().split("#s=").pop().replace(/-/g, "+").replace(/_/g, "/");
+  const cfg = JSON.parse(atob(code));
+  if (!cfg.o || !cfg.r || !cfg.t) throw new Error();
+  return cfg;
+}
+
 // ===== App =====
 const $ = (id) => document.getElementById(id);
 let file = null, key = null, vault = null, lockTimer = null;
+let syncCfg = null;
+try { syncCfg = JSON.parse(store.get("pe-sync") || "null"); } catch {}
+let carry = null; // phone edits waiting for the new master password (if it was changed on the laptop)
 let genOpts = { length: 24, lower: true, upper: true, digits: true, symbols: true };
 try { Object.assign(genOpts, JSON.parse(store.get("pe-gen") || "{}")); } catch {}
+const standalone = navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
 
-function show(v) { for (const id of ["v-open", "v-lock", "v-main"]) $(id).hidden = id !== "v-" + v; }
+function show(v) { for (const id of ["v-open", "v-loading", "v-lock", "v-main"]) $(id).hidden = id !== "v-" + v; }
 let toastT;
 function toast(t) { const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (el.hidden = true), 1800); }
 
@@ -207,10 +279,119 @@ async function copy(text, what) {
   toast(what + " copied");
 }
 
-function start() {
+function showLock() {
+  show("lock");
+  $("replace").hidden = !!syncCfg;
+  setTimeout(() => $("pw").focus(), 50);
+}
+
+async function start() {
+  // Arrived from the laptop's QR code: save the sync settings and strip them from the address bar.
+  let justConnected = false;
+  if (location.hash.startsWith("#s=")) {
+    try { connect(parseSetup(location.hash)); justConnected = true; } catch { $("open-err").textContent = "That setup link looks broken. Show the QR code again on the laptop."; }
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   const saved = store.get("pe-vault");
   if (saved) { try { file = JSON.parse(saved); } catch { file = null; } }
-  if (file) { show("lock"); setTimeout(() => $("pw").focus(), 50); } else show("open");
+  $("home-hint").hidden = !(justConnected && !standalone);
+  if (file) return showLock();
+  if (syncCfg) return downloadVault();
+  show("open");
+}
+
+function connect(cfg) {
+  syncCfg = cfg;
+  store.set("pe-sync", JSON.stringify(cfg));
+}
+
+// First run after connecting: fetch the vault from GitHub.
+async function downloadVault() {
+  show("loading");
+  $("loading-msg").textContent = "Getting your vault…";
+  $("loading-err").textContent = "";
+  $("loading-retry").hidden = true;
+  try {
+    const remote = await fetchRemote(syncCfg);
+    if (!remote.file) throw new Error("There's no vault on GitHub yet. On the laptop, open PassEnter → Settings → Sync now.");
+    file = remote.file;
+    store.set("pe-vault", JSON.stringify(file));
+    showLock();
+  } catch (err) {
+    $("loading-msg").textContent = "Couldn't get your vault.";
+    $("loading-err").textContent = err.message === "Failed to fetch" ? "No internet connection." : err.message;
+    $("loading-retry").hidden = false;
+  }
+}
+$("loading-retry").onclick = downloadVault;
+
+$("setup-go").onclick = () => {
+  try {
+    connect(parseSetup($("setup-code").value));
+    $("setup-code").value = "";
+    $("open-err").textContent = "";
+    downloadVault();
+  } catch { $("open-err").textContent = "That doesn't look like a PassEnter setup link."; }
+};
+$("copy-setup").onclick = () => {
+  const code = btoa(JSON.stringify(syncCfg)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  copy(location.origin + location.pathname + "#s=" + code, "Setup link");
+};
+
+// ----- Sync: pull, merge (newest edit of each login wins), push back -----
+let syncing = null, syncTimer = null;
+function setSyncLine(text, cls) {
+  $("sync-line").hidden = !syncCfg;
+  $("sync-text").textContent = text;
+  $("sync-dot").className = "dot " + (cls || "");
+}
+function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(sync, 800); }
+function sync() {
+  if (!syncCfg || !key) return Promise.resolve();
+  if (!syncing) syncing = doSync().finally(() => (syncing = null));
+  return syncing;
+}
+async function doSync() {
+  setSyncLine("Syncing…", "busy");
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const remote = await fetchRemote(syncCfg);
+      let remoteSig = null;
+      if (remote.file) {
+        if (remote.file.kdf.salt !== file.kdf.salt) {
+          // The master password was changed on the laptop. Keep this phone's edits and ask for the new one.
+          if (store.get("pe-dirty") === "1") carry = vault.entries;
+          file = remote.file;
+          store.set("pe-vault", JSON.stringify(file));
+          lock();
+          $("lock-err").textContent = "Your master password was changed on the laptop. Enter the new one.";
+          return;
+        }
+        const rv = await decryptVault(remote.file, key);
+        const merged = mergeEntries(vault.entries, rv.entries);
+        if (signature(merged) !== signature(vault.entries)) {
+          vault.entries = merged;
+          file = await encryptVault(vault, key, file);
+          store.set("pe-vault", JSON.stringify(file));
+          render();
+        }
+        remoteSig = signature(rv.entries);
+      }
+      if (signature(vault.entries) !== remoteSig) {
+        try { await putRemote(syncCfg, file, remote.sha); }
+        catch (e) { if (e.conflict) continue; throw e; }
+      }
+      store.set("pe-dirty", "");
+      setSyncLine("Synced just now · " + live().length + " logins", "ok");
+      return;
+    }
+    throw new Error("Kept clashing with the laptop; will retry");
+  } catch (err) {
+    const offline = err.message === "Failed to fetch" || err instanceof TypeError;
+    setSyncLine(offline
+      ? (store.get("pe-dirty") === "1" ? "Offline. Your changes will sync when you're back online" : "Offline. Showing the copy saved on this phone")
+      : err.message, "bad");
+  }
 }
 
 $("pick").onclick = () => $("file").click();
@@ -253,17 +434,20 @@ $("unlock-form").onsubmit = async (e) => {
     const k = await deriveKeyBytes($("pw").value, fromB64(file.kdf.salt), file.kdf.iterations);
     vault = await decryptVault(file, k);
     key = k; $("pw").value = ""; $("lock-err").textContent = "";
+    $("home-hint").hidden = true;
+    if (carry) { vault.entries = mergeEntries(vault.entries, carry); carry = null; await persist(); }
     $("q").value = ""; render(); show("main");
+    sync();
   } catch (err) { $("lock-err").textContent = err.message; }
   finally { btn.disabled = false; btn.textContent = "Unlock"; }
 };
 
-function lock() { key = null; vault = null; closeSheet(); $("list").replaceChildren(); show(file ? "lock" : "open"); }
+function lock() { key = null; vault = null; closeSheet(); $("list").replaceChildren(); if (file) showLock(); else show("open"); }
 $("lock").onclick = lock;
-// Lock when the page has been in the background for 2 minutes.
+// Lock when the page has been in the background for 2 minutes; sync when it comes back.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) lockTimer = setTimeout(lock, 120000);
-  else clearTimeout(lockTimer);
+  else { clearTimeout(lockTimer); sync(); }
 });
 
 const live = () => vault.entries.filter((e) => !e.deleted).sort((a, b) => (a.site + a.username).localeCompare(b.site + b.username));
@@ -288,7 +472,7 @@ function render() {
     b.onclick = () => openDetail(e);
     list.appendChild(b);
   }
-  $("unsynced").hidden = store.get("pe-dirty") !== "1";
+  $("unsynced").hidden = !!syncCfg || store.get("pe-dirty") !== "1";
 }
 $("q").oninput = render;
 
@@ -297,6 +481,7 @@ async function persist() {
   store.set("pe-vault", JSON.stringify(file));
   store.set("pe-dirty", "1");
   render();
+  scheduleSync();
 }
 
 function exportFile() {
@@ -413,7 +598,13 @@ $("gen-open").onclick = openGenerator;
 $("menu-open").onclick = () => openSheet((b) => {
   b.append(head("Vault"),
     el("div", { className: "stack" },
-      el("p", { className: "small muted", textContent: `${live().length} logins on this phone.` }),
+      el("p", { className: "small muted", textContent: `${live().length} logins on this phone.` + (syncCfg ? ` Syncing with ${syncCfg.o}/${syncCfg.r}.` : "") }),
+      syncCfg ? el("button", { className: "primary", textContent: "Sync now", onclick() { closeSheet(); sync(); } }) : "",
+      syncCfg ? el("button", { className: "danger", textContent: "Stop syncing on this phone", onclick() {
+        if (!confirm("Stop syncing this phone? Logins already here stay here.")) return;
+        try { localStorage.removeItem("pe-sync"); } catch {}
+        syncCfg = null; closeSheet(); render(); $("sync-line").hidden = true;
+      } }) : "",
       el("button", { className: "secondary", textContent: "Save vault file (to merge on laptop)", onclick: exportFile }),
       el("button", { className: "secondary", textContent: "Load a newer vault file from laptop", onclick: () => { closeSheet(); $("file").click(); } }),
       el("p", { className: "small muted", textContent: "Loading a newer file replaces this phone's copy. If you changed anything here, save the file and merge it on the laptop first." }),

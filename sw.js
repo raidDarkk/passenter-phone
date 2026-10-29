@@ -1,7 +1,7 @@
 // Keeps the phone page working with no signal. Serves the cached copy first,
 // then refreshes the cache in the background so code updates arrive next launch.
 // Only the page's own files are cached — the vault lives in localStorage, encrypted.
-const CACHE = "passenter-v1";
+const CACHE = "passenter-v2";
 const FILES = ["./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
